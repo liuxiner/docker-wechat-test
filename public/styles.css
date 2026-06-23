@@ -265,7 +265,8 @@ h2 {
 }
 
 select,
-textarea {
+textarea,
+input[type="file"] {
   border: 1px solid var(--line);
   border-radius: 8px;
   color: var(--ink);
@@ -281,7 +282,8 @@ textarea {
 }
 
 select:disabled,
-textarea:disabled {
+textarea:disabled,
+input[type="file"]:disabled {
   background: #f2f4f7;
   color: #98a2b3;
 }

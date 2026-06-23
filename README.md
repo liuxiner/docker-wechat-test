@@ -32,7 +32,7 @@ http://localhost:3017
 - Shows logout and disconnected reminders
 - Switches the Docker button between start and shutdown
 - Switches the WeChat button between login, logging in, and logout
-- Provides a small send-message test panel via `wx chats list --json` and `wx messages send`
+- Provides a small send-message test panel via `wx chats list --json`, `wx messages send --text`, and `wx messages send --image`
 
 ## Environment
 

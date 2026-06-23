@@ -24,6 +24,9 @@ const els = {
   messageText: document.querySelector("#messageText"),
   sendMessageBtn: document.querySelector("#sendMessageBtn"),
   testStatus: document.querySelector("#testStatus"),
+  imageFile: document.querySelector("#imageFile"),
+  sendImageBtn: document.querySelector("#sendImageBtn"),
+  imageStatus: document.querySelector("#imageStatus"),
   refreshBtn: document.querySelector("#refreshBtn"),
   loginModal: document.querySelector("#loginModal"),
   modalBackdrop: document.querySelector("#modalBackdrop"),
@@ -55,7 +58,9 @@ function setBusy(busy) {
   els.loadChatsBtn.disabled = busy || !loggedIn;
   els.chatSelect.disabled = busy || !loggedIn;
   els.messageText.disabled = busy || !loggedIn;
+  els.imageFile.disabled = busy || !loggedIn;
   els.sendMessageBtn.disabled = busy || !loggedIn || !els.chatSelect.value || !els.messageText.value.trim();
+  els.sendImageBtn.disabled = busy || !loggedIn || !els.chatSelect.value || !els.imageFile.files?.[0];
 }
 
 function showNotice(message, tone = "warn") {
@@ -221,6 +226,11 @@ function setTestStatus(message, tone = "") {
   els.testStatus.className = `inline-status ${tone}`;
 }
 
+function setImageStatus(message, tone = "") {
+  els.imageStatus.textContent = message;
+  els.imageStatus.className = `inline-status ${tone}`;
+}
+
 function openLoginModal() {
   if (!state.last?.vncUrl) return;
   state.modalOpenedByUser = true;
@@ -294,6 +304,46 @@ async function sendMessage() {
   }
 }
 
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Failed to read image"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function sendImage() {
+  const chatId = els.chatSelect.value;
+  const file = els.imageFile.files?.[0];
+  if (!chatId || !file) return;
+
+  setBusy(true);
+  setImageStatus("Uploading...");
+  try {
+    const dataUrl = await readFileAsDataUrl(file);
+    const payload = await api("/api/messages/send-image", {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        chatId,
+        filename: file.name,
+        mimeType: file.type,
+        dataUrl,
+      }),
+    });
+    render(payload.status);
+    setImageStatus("Image sent", "ok");
+  } catch (err) {
+    setImageStatus(err.message || String(err), "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
 function closeLoginModal() {
   els.loginModal.hidden = true;
   els.vncFrame.src = "about:blank";
@@ -336,8 +386,12 @@ els.loadChatsBtn.addEventListener("click", () => {
 
 els.chatSelect.addEventListener("change", () => setBusy(state.busy));
 els.messageText.addEventListener("input", () => setBusy(state.busy));
+els.imageFile.addEventListener("change", () => setBusy(state.busy));
 els.sendMessageBtn.addEventListener("click", () => {
   void sendMessage();
+});
+els.sendImageBtn.addEventListener("click", () => {
+  void sendImage();
 });
 
 els.refreshBtn.addEventListener("click", () => {

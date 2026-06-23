@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { dirname, extname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -51,8 +52,17 @@ type ChatSummary = {
   isGroup?: boolean;
 };
 
+type ImageUploadInput = {
+  chatId?: string;
+  filename?: string;
+  mimeType?: string;
+  dataUrl?: string;
+  data?: string;
+};
+
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const publicDir = join(rootDir, "public");
+const uploadDir = join(rootDir, "runtime", "uploads");
 
 const PORT = Number(process.env.PORT ?? 3017);
 const AGENT_URL = trimTrailingSlash(process.env.AGENT_WECHAT_URL ?? "http://localhost:6174");
@@ -400,6 +410,64 @@ async function sendTextMessage(chatId: string, text: string): Promise<CommandRes
   return runWx(["messages", "send", chatId, "--text", text], 120_000);
 }
 
+function imageExtension(filename?: string, mimeType?: string): string {
+  const fromName = extname(filename ?? "").toLowerCase();
+  if ([".png", ".jpg", ".jpeg", ".gif", ".webp"].includes(fromName)) {
+    return fromName;
+  }
+  switch (mimeType) {
+    case "image/jpeg":
+      return ".jpg";
+    case "image/gif":
+      return ".gif";
+    case "image/webp":
+      return ".webp";
+    default:
+      return ".png";
+  }
+}
+
+function decodeImagePayload(input: ImageUploadInput): { bytes: Buffer; mimeType?: string } {
+  const raw = input.dataUrl || input.data;
+  if (!raw) {
+    throw new Error("image data is required");
+  }
+
+  const dataUrlMatch = raw.match(/^data:([^;]+);base64,(.+)$/);
+  const base64 = dataUrlMatch ? dataUrlMatch[2] : raw;
+  const mimeType = input.mimeType || dataUrlMatch?.[1];
+  if (mimeType && !mimeType.startsWith("image/")) {
+    throw new Error("Only image uploads are supported");
+  }
+
+  return {
+    bytes: Buffer.from(base64, "base64"),
+    mimeType,
+  };
+}
+
+async function sendImageMessage(input: ImageUploadInput): Promise<CommandResult> {
+  const chatId = input.chatId?.trim();
+  if (!chatId) {
+    throw new Error("chatId is required");
+  }
+
+  const decoded = decodeImagePayload(input);
+  if (decoded.bytes.length === 0) {
+    throw new Error("image data is empty");
+  }
+
+  await mkdir(uploadDir, { recursive: true });
+  const tempPath = join(uploadDir, `${Date.now()}-${randomUUID()}${imageExtension(input.filename, decoded.mimeType)}`);
+
+  try {
+    await writeFile(tempPath, decoded.bytes);
+    return await runWx(["messages", "send", chatId, "--image", tempPath], 180_000);
+  } finally {
+    await unlink(tempPath).catch(() => undefined);
+  }
+}
+
 async function readJsonBody<T>(req: IncomingMessage, maxBytes = 1024 * 1024): Promise<T> {
   const chunks: Buffer[] = [];
   let total = 0;
@@ -541,6 +609,17 @@ async function handleApi(req: IncomingMessage, res: ServerResponse): Promise<boo
         return true;
       }
       const result = await sendTextMessage(chatId, text);
+      sendJson(res, 200, {
+        ok: true,
+        output: result.stdout,
+        status: await getDemoStatus(),
+      });
+      return true;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/messages/send-image") {
+      const body = await readJsonBody<ImageUploadInput>(req, 20 * 1024 * 1024);
+      const result = await sendImageMessage(body);
       sendJson(res, 200, {
         ok: true,
         output: result.stdout,
