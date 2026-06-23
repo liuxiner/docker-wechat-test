@@ -242,6 +242,70 @@ h2 {
   overflow: hidden;
 }
 
+.test-panel {
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.test-body {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.field-row {
+  display: grid;
+  gap: 6px;
+}
+
+.field-row label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+select,
+textarea {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  font: inherit;
+  min-height: 42px;
+  padding: 9px 10px;
+  width: 100%;
+}
+
+textarea {
+  min-height: 86px;
+  resize: vertical;
+}
+
+select:disabled,
+textarea:disabled {
+  background: #f2f4f7;
+  color: #98a2b3;
+}
+
+.send-row {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+}
+
+.inline-status {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.inline-status.ok {
+  color: var(--brand-strong);
+}
+
+.inline-status.error {
+  color: var(--danger);
+}
+
 .event-head {
   align-items: center;
   border-bottom: 1px solid var(--line);

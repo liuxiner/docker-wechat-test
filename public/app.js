@@ -18,9 +18,12 @@ const els = {
   notice: document.querySelector("#notice"),
   startBtn: document.querySelector("#startBtn"),
   loginBtn: document.querySelector("#loginBtn"),
-  logoutBtn: document.querySelector("#logoutBtn"),
-  stopBtn: document.querySelector("#stopBtn"),
   resetBtn: document.querySelector("#resetBtn"),
+  loadChatsBtn: document.querySelector("#loadChatsBtn"),
+  chatSelect: document.querySelector("#chatSelect"),
+  messageText: document.querySelector("#messageText"),
+  sendMessageBtn: document.querySelector("#sendMessageBtn"),
+  testStatus: document.querySelector("#testStatus"),
   refreshBtn: document.querySelector("#refreshBtn"),
   loginModal: document.querySelector("#loginModal"),
   modalBackdrop: document.querySelector("#modalBackdrop"),
@@ -43,11 +46,16 @@ async function api(path, options = {}) {
 
 function setBusy(busy) {
   state.busy = busy;
+  const loggedIn = state.last?.wechat?.status === "logged_in";
+  const loginRunning = Boolean(state.last?.wx?.loginJob?.running);
+
   els.startBtn.disabled = busy;
-  els.loginBtn.disabled = busy || !state.last?.agentReachable;
-  els.logoutBtn.disabled = busy || state.last?.wechat?.status !== "logged_in";
-  els.stopBtn.disabled = busy || !state.last?.container?.exists;
+  els.loginBtn.disabled = busy || loginRunning || (!state.last?.agentReachable && !loggedIn);
   els.resetBtn.disabled = busy;
+  els.loadChatsBtn.disabled = busy || !loggedIn;
+  els.chatSelect.disabled = busy || !loggedIn;
+  els.messageText.disabled = busy || !loggedIn;
+  els.sendMessageBtn.disabled = busy || !loggedIn || !els.chatSelect.value || !els.messageText.value.trim();
 }
 
 function showNotice(message, tone = "warn") {
@@ -136,6 +144,8 @@ function render(status) {
   state.last = status;
   const qr = renderTerminalQr(status);
   const running = Boolean(status.container?.running);
+  const loggedIn = status.wechat?.status === "logged_in";
+  const loginRunning = Boolean(status.wx?.loginJob?.running);
 
   const [tone, text] = heartbeatTone(status);
   els.heartbeat.className = `heartbeat ${tone}`;
@@ -144,6 +154,12 @@ function render(status) {
     ? '<span class="button-icon">⏻</span>Shutdown Docker'
     : '<span class="button-icon">▶</span>启动 Docker';
   els.startBtn.classList.toggle("danger-primary", running);
+  els.loginBtn.innerHTML = loggedIn
+    ? '<span class="button-icon">⏻</span>登出微信'
+    : loginRunning
+      ? '<span class="button-icon">…</span>登录中'
+      : '<span class="button-icon">↗</span>登录微信';
+  els.loginBtn.classList.toggle("danger", loggedIn);
 
   els.dockerStatus.textContent = status.cliAvailable ? "ready" : "missing";
   els.containerStatus.textContent = status.container?.status || "-";
@@ -200,6 +216,11 @@ async function runAction(action, success) {
   }
 }
 
+function setTestStatus(message, tone = "") {
+  els.testStatus.textContent = message;
+  els.testStatus.className = `inline-status ${tone}`;
+}
+
 function openLoginModal() {
   if (!state.last?.vncUrl) return;
   state.modalOpenedByUser = true;
@@ -214,6 +235,62 @@ async function startLoginAndOpenModal(newAccount = true) {
   );
   if (status?.vncUrl) {
     openLoginModal();
+  }
+}
+
+function chatLabel(chat) {
+  const id = chat.username || chat.id || "";
+  const name = chat.remark || chat.name || id;
+  const group = chat.isGroup ? " [群]" : "";
+  const unread = chat.unreadCount ? ` (${chat.unreadCount})` : "";
+  return `${name}${group}${unread} - ${id}`;
+}
+
+async function loadChats() {
+  setBusy(true);
+  setTestStatus("Loading...");
+  try {
+    const payload = await api("/api/chats?limit=100");
+    render(payload.status);
+    els.chatSelect.innerHTML = '<option value="">-</option>';
+    for (const chat of payload.chats || []) {
+      const id = chat.username || chat.id;
+      if (!id) continue;
+      const option = document.createElement("option");
+      option.value = id;
+      option.textContent = chatLabel(chat);
+      els.chatSelect.append(option);
+    }
+    setTestStatus(`${els.chatSelect.options.length - 1} chats`);
+  } catch (err) {
+    setTestStatus(err.message || String(err), "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function sendMessage() {
+  const chatId = els.chatSelect.value;
+  const text = els.messageText.value.trim();
+  if (!chatId || !text) return;
+
+  setBusy(true);
+  setTestStatus("Sending...");
+  try {
+    const payload = await api("/api/messages/send", {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ chatId, text }),
+    });
+    render(payload.status);
+    setTestStatus("Sent", "ok");
+  } catch (err) {
+    setTestStatus(err.message || String(err), "error");
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -238,6 +315,10 @@ els.startBtn.addEventListener("click", async () => {
 });
 
 els.loginBtn.addEventListener("click", () => {
+  if (state.last?.wechat?.status === "logged_in") {
+    void runAction(() => api("/api/logout", { method: "POST" }), "已退出微信。");
+    return;
+  }
   void startLoginAndOpenModal(true);
 });
 
@@ -245,16 +326,18 @@ els.continueLoginBtn.addEventListener("click", () => {
   void startLoginAndOpenModal(true);
 });
 
-els.logoutBtn.addEventListener("click", () => {
-  void runAction(() => api("/api/logout", { method: "POST" }), "已请求退出微信。");
-});
-
-els.stopBtn.addEventListener("click", () => {
-  void runAction(() => api("/api/stop", { method: "POST" }), "容器已停止。");
-});
-
 els.resetBtn.addEventListener("click", () => {
   void runAction(() => api("/api/reset", { method: "POST" }), "容器已重建。");
+});
+
+els.loadChatsBtn.addEventListener("click", () => {
+  void loadChats();
+});
+
+els.chatSelect.addEventListener("change", () => setBusy(state.busy));
+els.messageText.addEventListener("input", () => setBusy(state.busy));
+els.sendMessageBtn.addEventListener("click", () => {
+  void sendMessage();
 });
 
 els.refreshBtn.addEventListener("click", () => {

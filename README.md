@@ -30,6 +30,9 @@ http://localhost:3017
 - Opens the noVNC login page in an iframe modal
 - Polls WeChat login status every few seconds
 - Shows logout and disconnected reminders
+- Switches the Docker button between start and shutdown
+- Switches the WeChat button between login, logging in, and logout
+- Provides a small send-message test panel via `wx chats list --json` and `wx messages send`
 
 ## Environment
 
