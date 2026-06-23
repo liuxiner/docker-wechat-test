@@ -4,10 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --experimental-strip-types src/server.ts",
-    "start": "node --experimental-strip-types src/server.ts"
+    "dev": "tsx src/server.ts",
+    "start": "tsx src/server.ts"
+  },
+  "dependencies": {
+    "@agent-wechat/cli": "^0.11.15",
+    "tsx": "^4.20.6"
   },
   "engines": {
-    "node": ">=23"
+    "node": ">=22"
   }
 }

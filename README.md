@@ -5,8 +5,13 @@ Minimal Node.js TypeScript service and UI for running `agent-wechat` locally.
 ## Start
 
 ```bash
+nvm use
+pnpm install
 pnpm start
 ```
+
+This project uses Node 22 because `@agent-wechat/cli` relies on the native
+`WebSocket` global for `wx auth login`.
 
 Open:
 
@@ -16,8 +21,12 @@ http://localhost:3017
 
 ## What It Does
 
-- Creates a local auth token under `runtime/auth-token`
-- Starts Docker container `agent-wechat-demo`
+- Uses the project-local `@agent-wechat/cli` dependency when available
+- Falls back to global `wx` during development
+- Starts the upstream `agent-wechat` container through `wx up`
+- Reads status through `wx status` and `wx auth status`
+- Reads the noVNC token through `wx auth token`
+- Starts QR login through `wx auth login --new`
 - Opens the noVNC login page in an iframe modal
 - Polls WeChat login status every few seconds
 - Shows logout and disconnected reminders
@@ -27,13 +36,21 @@ http://localhost:3017
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PORT` | `3017` | Demo UI/service port |
-| `AGENT_WECHAT_IMAGE` | `ghcr.io/thisnick/agent-wechat:latest` | Docker image |
-| `AGENT_WECHAT_CONTAINER` | `agent-wechat-demo` | Container name |
-| `AGENT_WECHAT_URL` | `http://127.0.0.1:6174` | Server-side API URL |
+| `AGENT_WECHAT_URL` | `http://localhost:6174` | CLI/API URL |
 | `PUBLIC_AGENT_WECHAT_URL` | `http://localhost:6174` | Browser iframe URL |
-| `AGENT_WECHAT_PROXY` | empty | Optional proxy passed to the container |
+| `AGENT_WECHAT_PROXY` | empty | Optional proxy passed to `wx up --proxy` |
+| `AGENT_WECHAT_LOGIN_TIMEOUT` | `300` | Seconds passed to `wx auth login --timeout` |
+| `WX_BIN` | empty | Optional custom `wx` executable path |
 
 ## Notes
 
-This demo expects Docker to be running. The container needs `SYS_PTRACE` and
-`seccomp=unconfined`, matching the upstream agent-wechat requirements.
+This demo intentionally does not reimplement agent-wechat Docker launch logic.
+The upstream CLI owns container creation, auth token generation, health checks,
+login, logout, and shutdown.
+
+The upstream container name is `agent-wechat`, and its token lives in the
+location managed by `wx` (`~/.config/agent-wechat/token`).
+
+The embedded noVNC window is view-only in the upstream container. It is for
+watching QR codes and UI state, not manually clicking WeChat popups. Use the
+demo's login button to let `agent-wechat` dismiss popups and enter the QR page.

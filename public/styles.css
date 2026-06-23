@@ -208,6 +208,17 @@ h2 {
   border-color: var(--brand-strong);
 }
 
+.danger-primary {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+.danger-primary:hover {
+  background: #9f1f17;
+  border-color: #9f1f17;
+}
+
 .danger {
   color: var(--danger);
 }
@@ -223,6 +234,11 @@ h2 {
 
 .event-panel {
   min-height: 420px;
+  overflow: hidden;
+}
+
+.qr-panel {
+  margin-bottom: 16px;
   overflow: hidden;
 }
 
@@ -246,6 +262,17 @@ pre {
   white-space: pre-wrap;
 }
 
+.terminal-qr {
+  background: #fff;
+  color: #111827;
+  font-size: 16px;
+  line-height: 0.92;
+  max-height: none;
+  overflow: auto;
+  padding: 18px;
+  white-space: pre;
+}
+
 .modal[hidden] {
   display: none;
 }
@@ -267,7 +294,7 @@ pre {
   border-radius: 8px;
   box-shadow: var(--shadow);
   display: grid;
-  grid-template-rows: auto minmax(420px, 1fr);
+  grid-template-rows: auto auto minmax(420px, 1fr);
   height: min(820px, calc(100vh - 48px));
   left: 50%;
   overflow: hidden;
@@ -283,6 +310,21 @@ pre {
   display: flex;
   justify-content: space-between;
   padding: 14px 16px;
+}
+
+.modal-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.modal-note {
+  background: #f8fafc;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+  padding: 10px 16px;
 }
 
 .icon-button {

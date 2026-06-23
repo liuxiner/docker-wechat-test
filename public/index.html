@@ -22,7 +22,7 @@
       <section class="layout">
         <aside class="panel side-panel">
           <div class="status-block">
-            <span class="label">Docker</span>
+            <span class="label">wx CLI</span>
             <strong id="dockerStatus">-</strong>
           </div>
           <div class="status-block">
@@ -51,14 +51,41 @@
               <span class="button-icon">↗</span>
               登录微信
             </button>
-            <button id="logoutBtn" type="button">
-              <span class="button-icon">⏻</span>
-              Logout
+            <button class="danger" id="resetBtn" type="button">
+              <span class="button-icon">↻</span>
+              重建容器
             </button>
-            <button class="danger" id="stopBtn" type="button">
-              <span class="button-icon">■</span>
-              停止容器
-            </button>
+          </div>
+
+          <div class="panel qr-panel" id="qrPanel" hidden>
+            <div class="event-head">
+              <h2>微信扫码</h2>
+              <span class="label">使用微信扫一扫</span>
+            </div>
+            <pre class="terminal-qr" id="terminalQr"></pre>
+          </div>
+
+          <div class="panel test-panel">
+            <div class="event-head">
+              <h2>消息测试</h2>
+              <button class="ghost" id="loadChatsBtn" type="button">List Chats</button>
+            </div>
+            <div class="test-body">
+              <div class="field-row">
+                <label for="chatSelect">Chat</label>
+                <select id="chatSelect">
+                  <option value="">-</option>
+                </select>
+              </div>
+              <div class="field-row">
+                <label for="messageText">Text</label>
+                <textarea id="messageText" rows="3"></textarea>
+              </div>
+              <div class="send-row">
+                <button class="primary" id="sendMessageBtn" type="button">Send Message</button>
+                <span class="inline-status" id="testStatus"></span>
+              </div>
+            </div>
           </div>
 
           <div class="panel event-panel">
@@ -80,8 +107,14 @@
             <p class="eyebrow">第三方授权</p>
             <h2 id="modalTitle">微信扫码登录</h2>
           </div>
-          <button class="icon-button" id="closeModalBtn" type="button" aria-label="关闭">×</button>
+          <div class="modal-actions">
+            <button class="ghost" id="continueLoginBtn" type="button">自动进入扫码页</button>
+            <button class="icon-button" id="closeModalBtn" type="button" aria-label="关闭">×</button>
+          </div>
         </header>
+        <div class="modal-note">
+          预览窗口为只读模式。遇到微信弹窗时，请使用自动登录流程处理。
+        </div>
         <iframe id="vncFrame" title="WeChat noVNC Login"></iframe>
       </section>
     </div>

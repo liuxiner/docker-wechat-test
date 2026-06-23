@@ -1,23 +1,22 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { execFile } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { constants as fsConstants } from "node:fs";
-import { access, chmod } from "node:fs/promises";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { readFile, stat } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 type CommandResult = {
   stdout: string;
   stderr: string;
+  command?: string;
+  source?: string;
 };
 
 type ContainerInfo = {
   exists: boolean;
   running: boolean;
   status: string;
-  image?: string;
-  startedAt?: string;
+  error?: string;
 };
 
 type AgentAuthStatus = {
@@ -27,234 +26,396 @@ type AgentAuthStatus = {
 
 type DemoStatus = {
   ok: boolean;
-  dockerInstalled: boolean;
+  cliAvailable: boolean;
   container: ContainerInfo;
   agentReachable: boolean;
-  agentHealth?: unknown;
   wechat?: AgentAuthStatus;
-  token: string;
+  token?: string;
   apiUrl: string;
   vncUrl: string;
+  wx?: {
+    source?: string;
+    statusOutput?: string;
+    authStatusOutput?: string;
+    loginJob?: LoginJobSnapshot;
+  };
   lastError?: string;
+};
+
+type ChatSummary = {
+  id?: string;
+  username?: string;
+  name?: string;
+  remark?: string;
+  unreadCount?: number;
+  isGroup?: boolean;
 };
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const publicDir = join(rootDir, "public");
-const runtimeDir = join(rootDir, "runtime");
-const agentDataDir = join(runtimeDir, "agent-data");
-const agentHomeDir = join(runtimeDir, "agent-home");
-const tokenPath = join(runtimeDir, "auth-token");
 
 const PORT = Number(process.env.PORT ?? 3017);
-const IMAGE = process.env.AGENT_WECHAT_IMAGE ?? "ghcr.io/thisnick/agent-wechat:latest";
-const CONTAINER_NAME = process.env.AGENT_WECHAT_CONTAINER ?? "agent-wechat-demo";
-const AGENT_URL = trimTrailingSlash(process.env.AGENT_WECHAT_URL ?? "http://127.0.0.1:6174");
+const AGENT_URL = trimTrailingSlash(process.env.AGENT_WECHAT_URL ?? "http://localhost:6174");
 const PUBLIC_AGENT_URL = trimTrailingSlash(
   process.env.PUBLIC_AGENT_WECHAT_URL ?? "http://localhost:6174",
 );
 const AGENT_PROXY = process.env.AGENT_WECHAT_PROXY?.trim();
+const LOGIN_TIMEOUT_SECONDS = process.env.AGENT_WECHAT_LOGIN_TIMEOUT ?? "300";
+const requireFromHere = createRequire(import.meta.url);
+
+type WxInvocation = {
+  command: string;
+  prefixArgs: string[];
+  shell: boolean;
+  source: string;
+};
+
+type LoginJobSnapshot = {
+  running: boolean;
+  startedAt: string;
+  finishedAt?: string;
+  exitCode?: number | null;
+  stdoutTail: string;
+  stderrTail: string;
+  error?: string;
+};
+
+type LoginJob = LoginJobSnapshot & {
+  child?: ChildProcessWithoutNullStreams;
+};
+
+let cachedWxInvocation: WxInvocation | undefined;
+let loginJob: LoginJob | undefined;
 
 function trimTrailingSlash(input: string): string {
   return input.replace(/\/+$/, "");
 }
 
-function execDocker(args: string[], timeoutMs = 60_000): Promise<CommandResult> {
+async function resolveWxInvocation(): Promise<WxInvocation> {
+  if (cachedWxInvocation) return cachedWxInvocation;
+
+  if (process.env.WX_BIN) {
+    cachedWxInvocation = {
+      command: process.env.WX_BIN,
+      prefixArgs: [],
+      shell: process.platform === "win32",
+      source: "WX_BIN",
+    };
+    return cachedWxInvocation;
+  }
+
+  try {
+    const pkgPath = requireFromHere.resolve("@agent-wechat/cli/package.json");
+    const pkg = JSON.parse(await readFile(pkgPath, "utf8"));
+    const bin = typeof pkg.bin === "object" ? pkg.bin.wx : pkg.bin;
+    if (typeof bin === "string") {
+      cachedWxInvocation = {
+        command: process.execPath,
+        prefixArgs: [resolve(dirname(pkgPath), bin)],
+        shell: false,
+        source: "@agent-wechat/cli dependency",
+      };
+      return cachedWxInvocation;
+    }
+  } catch {
+    // Dependency not installed yet; fall back to global wx for development.
+  }
+
+  cachedWxInvocation = {
+    command: "wx",
+    prefixArgs: [],
+    shell: process.platform === "win32",
+    source: "global wx",
+  };
+  return cachedWxInvocation;
+}
+
+async function runWx(args: string[], timeoutMs = 120_000): Promise<CommandResult> {
+  const wx = await resolveWxInvocation();
+  const fullArgs = [...wx.prefixArgs, ...args];
   return new Promise((resolvePromise, reject) => {
-    execFile("docker", args, { timeout: timeoutMs }, (error, stdout, stderr) => {
+    execFile(
+      wx.command,
+      fullArgs,
+      {
+        timeout: timeoutMs,
+        shell: wx.shell,
+        cwd: rootDir,
+        env: {
+          ...process.env,
+          AGENT_WECHAT_URL: AGENT_URL,
+        },
+      },
+      (error, stdout, stderr) => {
       if (error) {
-        const err = new Error(stderr?.trim() || error.message);
+        const err = new Error(stderr?.toString().trim() || stdout?.toString().trim() || error.message);
         reject(err);
         return;
       }
       resolvePromise({
         stdout: stdout.toString().trim(),
         stderr: stderr.toString().trim(),
+        command: `wx ${args.join(" ")}`.trim(),
+        source: wx.source,
       });
-    });
+      },
+    );
   });
 }
 
-async function fileExists(path: string): Promise<boolean> {
+async function isCliAvailable(): Promise<boolean> {
   try {
-    await access(path, fsConstants.F_OK);
+    await runWx(["--version"], 20_000);
     return true;
   } catch {
     return false;
   }
 }
 
-async function ensureRuntime(): Promise<string> {
-  await mkdir(agentDataDir, { recursive: true });
-  await mkdir(agentHomeDir, { recursive: true });
-
-  if (!(await fileExists(tokenPath))) {
-    await writeFile(tokenPath, randomBytes(32).toString("hex"), { mode: 0o600 });
-  }
-
+async function getWxToken(): Promise<string | undefined> {
   try {
-    await chmod(tokenPath, 0o600);
+    const result = await runWx(["auth", "token"], 30_000);
+    const match = result.stdout.match(/[a-f0-9]{64}/i);
+    return match?.[0];
   } catch {
-    // Windows filesystems may not support POSIX chmod semantics.
-  }
-
-  return readFile(tokenPath, "utf8").then((buf) => buf.trim());
-}
-
-async function getContainerInfo(): Promise<ContainerInfo> {
-  try {
-    const result = await execDocker(["inspect", CONTAINER_NAME], 20_000);
-    const parsed = JSON.parse(result.stdout)[0];
-    const state = parsed?.State ?? {};
-    return {
-      exists: true,
-      running: Boolean(state.Running),
-      status: String(state.Status ?? "unknown"),
-      image: parsed?.Config?.Image,
-      startedAt: state.StartedAt,
-    };
-  } catch {
-    return {
-      exists: false,
-      running: false,
-      status: "missing",
-    };
+    return undefined;
   }
 }
 
-async function isDockerInstalled(): Promise<boolean> {
-  try {
-    await execDocker(["--version"], 10_000);
-    return true;
-  } catch {
-    return false;
-  }
-}
+function parseWxStatus(output: string): {
+  container: ContainerInfo;
+  agentReachable: boolean;
+  wechat?: AgentAuthStatus;
+} {
+  const lower = output.toLowerCase();
+  const containerLine = output.match(/^Container:\s*(.+)$/im)?.[1]?.trim() ?? "unknown";
+  const running = containerLine === "up";
+  const exists = containerLine !== "down" && containerLine !== "unknown (Docker unavailable)";
+  const serverLine = output.match(/^Server:\s*(.+)$/im)?.[1]?.trim();
+  const loginLine = output.match(/^Login:\s*(.+)$/im)?.[1]?.trim();
 
-async function fetchAgent(path: string, token?: string, init: RequestInit = {}): Promise<unknown> {
-  const headers = new Headers(init.headers);
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-  headers.set("Accept", "application/json");
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5_000);
-  try {
-    const res = await fetch(`${AGENT_URL}${path}`, {
-      ...init,
-      headers,
-      signal: controller.signal,
-    });
-    const text = await res.text();
-    const body = text ? JSON.parse(text) : null;
-    if (!res.ok) {
-      throw new Error(typeof body?.error === "string" ? body.error : `${res.status} ${res.statusText}`);
-    }
-    return body;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function waitForAgent(token: string, timeoutMs = 45_000): Promise<boolean> {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    try {
-      await fetchAgent("/health", token);
-      return true;
-    } catch {
-      await new Promise((resolvePromise) => setTimeout(resolvePromise, 1200));
-    }
-  }
-  return false;
-}
-
-async function getDemoStatus(lastError?: string): Promise<DemoStatus> {
-  const token = await ensureRuntime();
-  const dockerInstalled = await isDockerInstalled();
-  const container = dockerInstalled
-    ? await getContainerInfo()
-    : { exists: false, running: false, status: "docker_missing" };
-
-  let agentReachable = false;
-  let agentHealth: unknown;
   let wechat: AgentAuthStatus | undefined;
-  let observedError = lastError;
-
-  if (dockerInstalled && container.running) {
-    try {
-      agentHealth = await fetchAgent("/health", token);
-      agentReachable = true;
-      wechat = (await fetchAgent("/api/status/auth", token)) as AgentAuthStatus;
-    } catch (err) {
-      observedError = err instanceof Error ? err.message : String(err);
+  if (loginLine) {
+    if (loginLine.startsWith("logged in")) {
+      wechat = {
+        status: "logged_in",
+        loggedInUser: loginLine.match(/^logged in as\s+(.+)$/i)?.[1],
+      };
+    } else if (loginLine.includes("logged out")) {
+      wechat = { status: "logged_out" };
+    } else if (loginLine.includes("app not running")) {
+      wechat = { status: "app_not_running" };
+    } else {
+      wechat = { status: "unknown" };
     }
   }
 
   return {
-    ok: dockerInstalled && container.running && agentReachable,
-    dockerInstalled,
+    container: {
+      exists,
+      running,
+      status: containerLine,
+      error: output.match(/^Error:\s*(.+)$/im)?.[1]?.trim(),
+    },
+    agentReachable: serverLine === "reachable" || lower.includes("server: reachable"),
+    wechat,
+  };
+}
+
+function parseWxAuthStatus(output: string): AgentAuthStatus | undefined {
+  const trimmed = output.trim();
+  if (!trimmed) return undefined;
+  const loggedIn = trimmed.match(/^Logged in(?: as (.+))?/i);
+  if (loggedIn) {
+    return {
+      status: "logged_in",
+      loggedInUser: loggedIn[1],
+    };
+  }
+  const status = trimmed.match(/^Status:\s*(.+)$/i)?.[1]?.trim().replace(/\s+/g, "_");
+  if (status === "logged_out" || status === "app_not_running" || status === "unknown") {
+    return { status };
+  }
+  return { status: "unknown" };
+}
+
+async function getDemoStatus(lastError?: string): Promise<DemoStatus> {
+  const token = await getWxToken();
+  const cliAvailable = await isCliAvailable();
+  let container: ContainerInfo = { exists: false, running: false, status: "unknown" };
+  let agentReachable = false;
+  let wechat: AgentAuthStatus | undefined;
+  let observedError = lastError;
+  let statusOutput: string | undefined;
+  let authStatusOutput: string | undefined;
+  let wxSource: string | undefined;
+
+  if (cliAvailable) {
+    try {
+      const status = await runWx(["status"], 60_000);
+      statusOutput = status.stdout;
+      wxSource = status.source;
+      const parsed = parseWxStatus(status.stdout);
+      container = parsed.container;
+      agentReachable = parsed.agentReachable;
+      wechat = parsed.wechat;
+
+      if (agentReachable) {
+        const auth = await runWx(["auth", "status"], 30_000);
+        authStatusOutput = auth.stdout;
+        wechat = parseWxAuthStatus(auth.stdout) ?? wechat;
+      }
+      if (wechat?.status === "logged_in" && loginJob && !loginJob.running && loginJob.exitCode !== 0) {
+        loginJob = undefined;
+      }
+    } catch (err) {
+      observedError = err instanceof Error ? err.message : String(err);
+    }
+  } else {
+    observedError = observedError ?? "wx CLI is not available. Run pnpm install or install @agent-wechat/cli.";
+  }
+
+  return {
+    ok: cliAvailable && container.running && agentReachable,
+    cliAvailable,
     container,
     agentReachable,
-    agentHealth,
     wechat,
     token,
     apiUrl: AGENT_URL,
-    vncUrl: `${PUBLIC_AGENT_URL}/vnc/?token=${encodeURIComponent(token)}&autoconnect=true`,
+    vncUrl: `${PUBLIC_AGENT_URL}/vnc/?token=${encodeURIComponent(token ?? "")}&autoconnect=true`,
+    wx: {
+      source: wxSource ?? cachedWxInvocation?.source,
+      statusOutput,
+      authStatusOutput,
+      loginJob: getLoginJobSnapshot(),
+    },
     lastError: observedError,
   };
 }
 
 async function startContainer(): Promise<void> {
-  const token = await ensureRuntime();
-  const info = await getContainerInfo();
-
-  if (info.exists) {
-    if (!info.running) {
-      await execDocker(["start", CONTAINER_NAME], 60_000);
-    }
-    await waitForAgent(token);
-    return;
-  }
-
-  const args = [
-    "run",
-    "-d",
-    "--name",
-    CONTAINER_NAME,
-    "--security-opt",
-    "seccomp=unconfined",
-    "--cap-add",
-    "SYS_PTRACE",
-    "-p",
-    "6174:6174",
-    "-v",
-    `${agentDataDir}:/data`,
-    "-v",
-    `${agentHomeDir}:/home/wechat`,
-    "-v",
-    `${tokenPath}:/data/auth-token:ro`,
-    "--restart",
-    "unless-stopped",
-  ];
-
+  const args = ["up"];
   if (AGENT_PROXY) {
-    args.push("--cap-add", "NET_ADMIN", "-e", `PROXY=${AGENT_PROXY}`);
+    args.push("--proxy", AGENT_PROXY);
   }
-
-  args.push(IMAGE);
-  await execDocker(args, 300_000);
-  await waitForAgent(token);
+  await runWx(args, 300_000);
 }
 
 async function stopContainer(): Promise<void> {
-  const info = await getContainerInfo();
-  if (info.exists && info.running) {
-    await execDocker(["stop", CONTAINER_NAME], 60_000);
-  }
+  await runWx(["down"], 120_000);
 }
 
 async function logoutWeChat(): Promise<unknown> {
-  const token = await ensureRuntime();
-  return fetchAgent("/api/status/logout", token, { method: "POST" });
+  const result = await runWx(["auth", "logout"], 60_000);
+  return result.stdout || result.stderr || "logout requested";
+}
+
+async function resetContainer(): Promise<void> {
+  try {
+    await stopContainer();
+  } catch {
+    // wx down is allowed to report "not found"; wx up below is the important step.
+  }
+  await startContainer();
+}
+
+function appendTail(existing: string, chunk: Buffer): string {
+  const merged = `${existing}${chunk.toString()}`;
+  return merged.length > 6000 ? merged.slice(-6000) : merged;
+}
+
+function getLoginJobSnapshot(): LoginJobSnapshot | undefined {
+  if (!loginJob) return undefined;
+  const { child: _child, ...snapshot } = loginJob;
+  return snapshot;
+}
+
+async function startLoginJob(newAccount = false): Promise<LoginJobSnapshot> {
+  if (loginJob?.running) {
+    return getLoginJobSnapshot() as LoginJobSnapshot;
+  }
+
+  const wx = await resolveWxInvocation();
+  const args = [
+    ...wx.prefixArgs,
+    "auth",
+    "login",
+    "--timeout",
+    LOGIN_TIMEOUT_SECONDS,
+    ...(newAccount ? ["--new"] : []),
+  ];
+  const child = spawn(wx.command, args, {
+    cwd: rootDir,
+    shell: wx.shell,
+    env: {
+      ...process.env,
+      AGENT_WECHAT_URL: AGENT_URL,
+    },
+  });
+
+  loginJob = {
+    running: true,
+    startedAt: new Date().toISOString(),
+    stdoutTail: "",
+    stderrTail: "",
+    child,
+  };
+
+  child.stdout.on("data", (chunk) => {
+    if (loginJob) loginJob.stdoutTail = appendTail(loginJob.stdoutTail, chunk);
+  });
+
+  child.stderr.on("data", (chunk) => {
+    if (loginJob) loginJob.stderrTail = appendTail(loginJob.stderrTail, chunk);
+  });
+
+  child.on("error", (err) => {
+    if (!loginJob) return;
+    loginJob.running = false;
+    loginJob.finishedAt = new Date().toISOString();
+    loginJob.error = err.message;
+  });
+
+  child.on("exit", (code) => {
+    if (!loginJob) return;
+    loginJob.running = false;
+    loginJob.finishedAt = new Date().toISOString();
+    loginJob.exitCode = code;
+  });
+
+  return getLoginJobSnapshot() as LoginJobSnapshot;
+}
+
+async function listChats(limit = 50): Promise<ChatSummary[]> {
+  const result = await runWx(["chats", "list", "--limit", String(limit), "--json"], 60_000);
+  const parsed = JSON.parse(result.stdout);
+  if (!Array.isArray(parsed)) {
+    throw new Error("wx chats list did not return an array");
+  }
+  return parsed;
+}
+
+async function sendTextMessage(chatId: string, text: string): Promise<CommandResult> {
+  return runWx(["messages", "send", chatId, "--text", text], 120_000);
+}
+
+async function readJsonBody<T>(req: IncomingMessage, maxBytes = 1024 * 1024): Promise<T> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buffer.length;
+    if (total > maxBytes) {
+      throw new Error("Request body too large");
+    }
+    chunks.push(buffer);
+  }
+
+  const raw = Buffer.concat(chunks).toString("utf8").trim();
+  if (!raw) return {} as T;
+  return JSON.parse(raw) as T;
 }
 
 function sendJson(res: ServerResponse, status: number, payload: unknown): void {
@@ -337,10 +498,52 @@ async function handleApi(req: IncomingMessage, res: ServerResponse): Promise<boo
       return true;
     }
 
+    if (req.method === "POST" && url.pathname === "/api/reset") {
+      await resetContainer();
+      sendJson(res, 200, await getDemoStatus());
+      return true;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/login/start") {
+      const newAccount = url.searchParams.get("new") === "1";
+      const login = await startLoginJob(newAccount);
+      sendJson(res, 200, {
+        login,
+        status: await getDemoStatus(),
+      });
+      return true;
+    }
+
     if (req.method === "POST" && url.pathname === "/api/logout") {
       const logout = await logoutWeChat();
       sendJson(res, 200, {
         logout,
+        status: await getDemoStatus(),
+      });
+      return true;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/chats") {
+      const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 50), 1), 200);
+      sendJson(res, 200, {
+        chats: await listChats(limit),
+        status: await getDemoStatus(),
+      });
+      return true;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/messages/send") {
+      const body = await readJsonBody<{ chatId?: string; text?: string }>(req);
+      const chatId = body.chatId?.trim();
+      const text = body.text?.trim();
+      if (!chatId || !text) {
+        sendJson(res, 400, { error: "chatId and text are required" });
+        return true;
+      }
+      const result = await sendTextMessage(chatId, text);
+      sendJson(res, 200, {
+        ok: true,
+        output: result.stdout,
         status: await getDemoStatus(),
       });
       return true;
