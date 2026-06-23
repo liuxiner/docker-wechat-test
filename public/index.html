@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>微信登录 Demo</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="topbar">
+        <div>
+          <p class="eyebrow">Docker WeChat</p>
+          <h1>微信连接台</h1>
+        </div>
+        <div class="heartbeat" id="heartbeat">
+          <span class="pulse"></span>
+          <span id="heartbeatText">检测中</span>
+        </div>
+      </section>
+
+      <section class="layout">
+        <aside class="panel side-panel">
+          <div class="status-block">
+            <span class="label">Docker</span>
+            <strong id="dockerStatus">-</strong>
+          </div>
+          <div class="status-block">
+            <span class="label">Container</span>
+            <strong id="containerStatus">-</strong>
+          </div>
+          <div class="status-block">
+            <span class="label">WeChat</span>
+            <strong id="wechatStatus">-</strong>
+          </div>
+          <div class="status-block">
+            <span class="label">Account</span>
+            <strong id="accountStatus">-</strong>
+          </div>
+        </aside>
+
+        <section class="workspace">
+          <div class="notice" id="notice" hidden></div>
+
+          <div class="actions">
+            <button class="primary" id="startBtn" type="button">
+              <span class="button-icon">▶</span>
+              启动 Docker
+            </button>
+            <button id="loginBtn" type="button">
+              <span class="button-icon">↗</span>
+              登录微信
+            </button>
+            <button id="logoutBtn" type="button">
+              <span class="button-icon">⏻</span>
+              Logout
+            </button>
+            <button class="danger" id="stopBtn" type="button">
+              <span class="button-icon">■</span>
+              停止容器
+            </button>
+          </div>
+
+          <div class="panel event-panel">
+            <div class="event-head">
+              <h2>运行状态</h2>
+              <button class="ghost" id="refreshBtn" type="button">刷新</button>
+            </div>
+            <pre id="statusJson">{}</pre>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <div class="modal" id="loginModal" hidden>
+      <div class="modal-backdrop" id="modalBackdrop"></div>
+      <section class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <header class="modal-header">
+          <div>
+            <p class="eyebrow">第三方授权</p>
+            <h2 id="modalTitle">微信扫码登录</h2>
+          </div>
+          <button class="icon-button" id="closeModalBtn" type="button" aria-label="关闭">×</button>
+        </header>
+        <iframe id="vncFrame" title="WeChat noVNC Login"></iframe>
+      </section>
+    </div>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
