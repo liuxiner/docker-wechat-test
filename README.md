@@ -33,6 +33,7 @@ http://localhost:3017
 - Switches the Docker button between start and shutdown
 - Switches the WeChat button between login, logging in, and logout
 - Provides a small send-message test panel via `wx chats list --json`, `wx messages send --text`, and `wx messages send --image`
+- Provides exact group/user name search backed by `wx chats find` and `wx contacts find --json`
 
 ## Environment
 
@@ -57,3 +58,8 @@ location managed by `wx` (`~/.config/agent-wechat/token`).
 The embedded noVNC window is view-only in the upstream container. It is for
 watching QR codes and UI state, not manually clicking WeChat popups. Use the
 demo's login button to let `agent-wechat` dismiss popups and enter the QR page.
+
+`agent-wechat` has search commands (`wx chats find <name>` and
+`wx contacts find <name> --json`), but the CLI does not expose an exact-match
+flag. This demo service filters the returned candidates with strict string
+matching before showing them in the UI.

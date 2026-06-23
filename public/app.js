@@ -19,6 +19,11 @@ const els = {
   startBtn: document.querySelector("#startBtn"),
   loginBtn: document.querySelector("#loginBtn"),
   resetBtn: document.querySelector("#resetBtn"),
+  searchName: document.querySelector("#searchName"),
+  searchType: document.querySelector("#searchType"),
+  searchBtn: document.querySelector("#searchBtn"),
+  searchResults: document.querySelector("#searchResults"),
+  searchStatus: document.querySelector("#searchStatus"),
   loadChatsBtn: document.querySelector("#loadChatsBtn"),
   chatSelect: document.querySelector("#chatSelect"),
   messageText: document.querySelector("#messageText"),
@@ -55,6 +60,9 @@ function setBusy(busy) {
   els.startBtn.disabled = busy;
   els.loginBtn.disabled = busy || loginRunning || (!state.last?.agentReachable && !loggedIn);
   els.resetBtn.disabled = busy;
+  els.searchName.disabled = busy || !loggedIn;
+  els.searchType.disabled = busy || !loggedIn;
+  els.searchBtn.disabled = busy || !loggedIn || !els.searchName.value.trim();
   els.loadChatsBtn.disabled = busy || !loggedIn;
   els.chatSelect.disabled = busy || !loggedIn;
   els.messageText.disabled = busy || !loggedIn;
@@ -231,6 +239,11 @@ function setImageStatus(message, tone = "") {
   els.imageStatus.className = `inline-status ${tone}`;
 }
 
+function setSearchStatus(message, tone = "") {
+  els.searchStatus.textContent = message;
+  els.searchStatus.className = `inline-status ${tone}`;
+}
+
 function openLoginModal() {
   if (!state.last?.vncUrl) return;
   state.modalOpenedByUser = true;
@@ -256,6 +269,40 @@ function chatLabel(chat) {
   return `${name}${group}${unread} - ${id}`;
 }
 
+function searchResultLabel(result) {
+  const id = result.username || result.id || "";
+  const name = result.remark || result.name || id;
+  const marker = result.type === "group" ? "群" : result.type === "user" ? "用户" : "聊天";
+  return `${name} [${marker}] - ${id}`;
+}
+
+function selectChatTarget(target) {
+  const id = target.username || target.id;
+  if (!id) return;
+
+  let option = Array.from(els.chatSelect.options).find((item) => item.value === id);
+  if (!option) {
+    option = document.createElement("option");
+    option.value = id;
+    option.textContent = searchResultLabel(target);
+    els.chatSelect.append(option);
+  }
+  els.chatSelect.value = id;
+  setBusy(state.busy);
+}
+
+function renderSearchResults(results) {
+  els.searchResults.replaceChildren();
+  for (const result of results) {
+    const button = document.createElement("button");
+    button.className = "search-result";
+    button.type = "button";
+    button.textContent = searchResultLabel(result);
+    button.addEventListener("click", () => selectChatTarget(result));
+    els.searchResults.append(button);
+  }
+}
+
 async function loadChats() {
   setBusy(true);
   setTestStatus("Loading...");
@@ -274,6 +321,29 @@ async function loadChats() {
     setTestStatus(`${els.chatSelect.options.length - 1} chats`);
   } catch (err) {
     setTestStatus(err.message || String(err), "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function searchExactTarget() {
+  const name = els.searchName.value.trim();
+  const type = els.searchType.value;
+  if (!name) return;
+
+  setBusy(true);
+  setSearchStatus("Searching...");
+  try {
+    const payload = await api(`/api/search/exact?name=${encodeURIComponent(name)}&type=${encodeURIComponent(type)}`);
+    render(payload.status);
+    const results = payload.results || [];
+    renderSearchResults(results);
+    if (results.length === 1) {
+      selectChatTarget(results[0]);
+    }
+    setSearchStatus(`${results.length} exact match${results.length === 1 ? "" : "es"}`, results.length ? "ok" : "");
+  } catch (err) {
+    setSearchStatus(err.message || String(err), "error");
   } finally {
     setBusy(false);
   }
@@ -378,6 +448,18 @@ els.continueLoginBtn.addEventListener("click", () => {
 
 els.resetBtn.addEventListener("click", () => {
   void runAction(() => api("/api/reset", { method: "POST" }), "容器已重建。");
+});
+
+els.searchName.addEventListener("input", () => setBusy(state.busy));
+els.searchName.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    void searchExactTarget();
+  }
+});
+els.searchType.addEventListener("change", () => setBusy(state.busy));
+els.searchBtn.addEventListener("click", () => {
+  void searchExactTarget();
 });
 
 els.loadChatsBtn.addEventListener("click", () => {

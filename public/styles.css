@@ -266,6 +266,7 @@ h2 {
 
 select,
 textarea,
+input[type="search"],
 input[type="file"] {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -283,9 +284,36 @@ textarea {
 
 select:disabled,
 textarea:disabled,
+input[type="search"]:disabled,
 input[type="file"]:disabled {
   background: #f2f4f7;
   color: #98a2b3;
+}
+
+.search-box {
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  margin: -16px -16px 2px;
+  padding: 16px;
+}
+
+.search-row {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(180px, 1fr) 160px auto;
+}
+
+.search-results {
+  display: grid;
+  gap: 8px;
+}
+
+.search-result {
+  min-height: 38px;
+  overflow-wrap: anywhere;
+  text-align: left;
 }
 
 .send-row {
@@ -424,5 +452,9 @@ iframe {
 
   .actions button {
     flex: 1 1 180px;
+  }
+
+  .search-row {
+    grid-template-columns: 1fr;
   }
 }

@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, extname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { setTimeout as sleep } from "node:timers/promises";
 
 type CommandResult = {
   stdout: string;
@@ -50,6 +51,28 @@ type ChatSummary = {
   remark?: string;
   unreadCount?: number;
   isGroup?: boolean;
+};
+
+type ContactSummary = {
+  username?: string;
+  nickName?: string;
+  name?: string;
+  remark?: string;
+  contactType?: string;
+};
+
+type SearchTargetType = "all" | "group" | "user";
+
+type ExactSearchResult = {
+  id: string;
+  username: string;
+  type: "group" | "user" | "chat";
+  name: string;
+  remark?: string;
+  matchField: string;
+  source: string;
+  isGroup?: boolean;
+  contactType?: string;
 };
 
 type ImageUploadInput = {
@@ -406,8 +429,176 @@ async function listChats(limit = 50): Promise<ChatSummary[]> {
   return parsed;
 }
 
+function exactMatchField(query: string, fields: Array<[string, unknown]>): string | undefined {
+  const normalizedQuery = query.trim();
+  for (const [field, value] of fields) {
+    if (typeof value === "string" && value.trim() === normalizedQuery) {
+      return field;
+    }
+  }
+  return undefined;
+}
+
+function parseChatsFindOutput(output: string): Array<{ id: string; name: string }> {
+  const rows: Array<{ id: string; name: string }> = [];
+  for (const line of output.split(/\r?\n/)) {
+    const match = line.match(/^\s+([^:]+):\s*(.+?)\s*$/);
+    if (match) {
+      rows.push({ id: match[1].trim(), name: match[2].trim() });
+    }
+  }
+  return rows;
+}
+
+async function getChat(chatId: string): Promise<ChatSummary | undefined> {
+  try {
+    const result = await runWx(["chats", "get", chatId, "--json"], 60_000);
+    return JSON.parse(result.stdout) as ChatSummary;
+  } catch {
+    return undefined;
+  }
+}
+
+function chatResultType(chat: ChatSummary | undefined, fallbackId: string): ExactSearchResult["type"] {
+  if (chat?.isGroup) return "group";
+  if (chat?.isGroup === false) return "user";
+  return fallbackId.endsWith("@chatroom") ? "group" : "chat";
+}
+
+async function findExactChats(name: string, targetType: SearchTargetType): Promise<ExactSearchResult[]> {
+  const result = await runWx(["chats", "find", name], 60_000);
+  const rows = parseChatsFindOutput(result.stdout);
+  const exactRows = rows.filter((row) => exactMatchField(name, [["name", row.name]]));
+  const matches: ExactSearchResult[] = [];
+
+  for (const row of exactRows) {
+    const chat = await getChat(row.id);
+    const type = chatResultType(chat, row.id);
+    if (targetType === "group" && type !== "group") continue;
+    if (targetType === "user" && type !== "user") continue;
+
+    const id = chat?.username || chat?.id || row.id;
+    matches.push({
+      id,
+      username: id,
+      type,
+      name: chat?.name || row.name || id,
+      remark: chat?.remark,
+      matchField: exactMatchField(name, [
+        ["name", chat?.name],
+        ["remark", chat?.remark],
+        ["findName", row.name],
+      ]) ?? "name",
+      source: "wx chats find",
+      isGroup: chat?.isGroup,
+    });
+  }
+
+  return matches;
+}
+
+function isGroupContact(contact: ContactSummary): boolean {
+  const username = contact.username ?? "";
+  const contactType = contact.contactType ?? "";
+  return username.endsWith("@chatroom") || /group|chatroom/i.test(contactType);
+}
+
+async function findExactContacts(name: string, targetType: SearchTargetType): Promise<ExactSearchResult[]> {
+  if (targetType === "group") return [];
+
+  const result = await runWx(["contacts", "find", name, "--json"], 60_000);
+  const parsed = JSON.parse(result.stdout);
+  if (!Array.isArray(parsed)) {
+    throw new Error("wx contacts find did not return an array");
+  }
+
+  const matches: ExactSearchResult[] = [];
+  for (const contact of parsed as ContactSummary[]) {
+    const matchField = exactMatchField(name, [
+      ["nickName", contact.nickName],
+      ["remark", contact.remark],
+      ["name", contact.name],
+    ]);
+    if (!matchField) continue;
+
+    const group = isGroupContact(contact);
+    if (targetType === "user" && group) continue;
+
+    const id = contact.username;
+    if (!id) continue;
+
+    matches.push({
+      id,
+      username: id,
+      type: group ? "group" : "user",
+      name: contact.nickName || contact.name || contact.remark || id,
+      remark: contact.remark,
+      matchField,
+      source: "wx contacts find --json",
+      isGroup: group,
+      contactType: contact.contactType,
+    });
+  }
+  return matches;
+}
+
+function dedupeExactResults(results: ExactSearchResult[]): ExactSearchResult[] {
+  const merged = new Map<string, ExactSearchResult>();
+  for (const result of results) {
+    const key = `${result.type}:${result.username || result.id}`;
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, result);
+      continue;
+    }
+
+    const sources = new Set(existing.source.split(" + ").concat(result.source.split(" + ")));
+    const fields = new Set(existing.matchField.split(", ").concat(result.matchField.split(", ")));
+    merged.set(key, {
+      ...existing,
+      ...result,
+      name: existing.name || result.name,
+      remark: existing.remark || result.remark,
+      source: Array.from(sources).join(" + "),
+      matchField: Array.from(fields).join(", "),
+    });
+  }
+  return Array.from(merged.values());
+}
+
+async function searchExactByName(name: string, targetType: SearchTargetType): Promise<ExactSearchResult[]> {
+  const query = name.trim();
+  if (!query) {
+    throw new Error("name is required");
+  }
+
+  const [chatMatches, contactMatches] = await Promise.all([
+    findExactChats(query, targetType),
+    findExactContacts(query, targetType),
+  ]);
+  return dedupeExactResults([...chatMatches, ...contactMatches]);
+}
+
+async function openChatBeforeSend(chatId: string): Promise<CommandResult> {
+  const result = await runWx(["chats", "open", chatId], 90_000);
+  await sleep(500);
+  return result;
+}
+
+function mergeCommandOutput(openResult: CommandResult, sendResult: CommandResult): CommandResult {
+  return {
+    ...sendResult,
+    stdout: [openResult.stdout, sendResult.stdout].filter(Boolean).join("\n"),
+    stderr: [openResult.stderr, sendResult.stderr].filter(Boolean).join("\n"),
+    command: `${openResult.command ?? "wx chats open"} && ${sendResult.command ?? "wx messages send"}`,
+    source: sendResult.source ?? openResult.source,
+  };
+}
+
 async function sendTextMessage(chatId: string, text: string): Promise<CommandResult> {
-  return runWx(["messages", "send", chatId, "--text", text], 120_000);
+  const openResult = await openChatBeforeSend(chatId);
+  const sendResult = await runWx(["messages", "send", chatId, "--text", text], 120_000);
+  return mergeCommandOutput(openResult, sendResult);
 }
 
 function imageExtension(filename?: string, mimeType?: string): string {
@@ -461,8 +652,10 @@ async function sendImageMessage(input: ImageUploadInput): Promise<CommandResult>
   const tempPath = join(uploadDir, `${Date.now()}-${randomUUID()}${imageExtension(input.filename, decoded.mimeType)}`);
 
   try {
+    const openResult = await openChatBeforeSend(chatId);
     await writeFile(tempPath, decoded.bytes);
-    return await runWx(["messages", "send", chatId, "--image", tempPath], 180_000);
+    const sendResult = await runWx(["messages", "send", chatId, "--image", tempPath], 180_000);
+    return mergeCommandOutput(openResult, sendResult);
   } finally {
     await unlink(tempPath).catch(() => undefined);
   }
@@ -595,6 +788,30 @@ async function handleApi(req: IncomingMessage, res: ServerResponse): Promise<boo
       const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 50), 1), 200);
       sendJson(res, 200, {
         chats: await listChats(limit),
+        status: await getDemoStatus(),
+      });
+      return true;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/search/exact") {
+      const name = url.searchParams.get("name")?.trim() ?? "";
+      const rawType = url.searchParams.get("type") ?? "all";
+      const type: SearchTargetType =
+        rawType === "group" || rawType === "user" || rawType === "all" ? rawType : "all";
+      if (!name) {
+        sendJson(res, 400, { error: "name is required" });
+        return true;
+      }
+      sendJson(res, 200, {
+        query: name,
+        type,
+        exact: true,
+        agentWechatSupport: {
+          chatsFind: "wx chats find <name>",
+          contactsFind: "wx contacts find <name> --json",
+          exactMatch: "filtered by this demo service",
+        },
+        results: await searchExactByName(name, type),
         status: await getDemoStatus(),
       });
       return true;

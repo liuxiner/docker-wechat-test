@@ -71,6 +71,25 @@
               <button class="ghost" id="loadChatsBtn" type="button">List Chats</button>
             </div>
             <div class="test-body">
+              <div class="search-box">
+                <div class="search-row">
+                  <div class="field-row search-name-field">
+                    <label for="searchName">Exact Name</label>
+                    <input id="searchName" type="search" autocomplete="off" />
+                  </div>
+                  <div class="field-row search-type-field">
+                    <label for="searchType">Type</label>
+                    <select id="searchType">
+                      <option value="all">Group/User</option>
+                      <option value="group">Group</option>
+                      <option value="user">User</option>
+                    </select>
+                  </div>
+                  <button id="searchBtn" type="button">Search</button>
+                </div>
+                <div class="search-results" id="searchResults"></div>
+                <span class="inline-status" id="searchStatus"></span>
+              </div>
               <div class="field-row">
                 <label for="chatSelect">Chat</label>
                 <select id="chatSelect">
