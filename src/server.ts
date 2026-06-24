@@ -83,9 +83,23 @@ type ImageUploadInput = {
   data?: string;
 };
 
+type MentionTestInput = {
+  groupName?: string;
+  mentionNames?: string;
+  templateTail?: string;
+};
+
+type MentionTestResult = {
+  group: ExactSearchResult;
+  users: ExactSearchResult[];
+  text: string;
+  send: CommandResult;
+};
+
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const publicDir = join(rootDir, "public");
 const uploadDir = join(rootDir, "runtime", "uploads");
+const DEFAULT_MENTION_TEST_TAIL = "真实数据桌面微信@测试请忽略";
 
 const PORT = Number(process.env.PORT ?? 3017);
 const AGENT_URL = trimTrailingSlash(process.env.AGENT_WECHAT_URL ?? "http://localhost:6174");
@@ -601,6 +615,89 @@ async function sendTextMessage(chatId: string, text: string): Promise<CommandRes
   return mergeCommandOutput(openResult, sendResult);
 }
 
+function splitMentionNames(input: string): string[] {
+  return input
+    .split(/[,，]/)
+    .map((name) => name.trim())
+    .filter(Boolean);
+}
+
+async function resolveSingleExactResult(
+  query: string,
+  targetType: SearchTargetType,
+  label: string,
+): Promise<ExactSearchResult> {
+  const results = await searchExactByName(query, targetType);
+  if (results.length === 0) {
+    throw new Error(`No exact ${label} found for "${query}"`);
+  }
+  if (results.length > 1) {
+    throw new Error(`Multiple exact ${label} matches found for "${query}"`);
+  }
+  return results[0];
+}
+
+async function resolveGroupByName(query: string): Promise<ExactSearchResult> {
+  const exact = await searchExactByName(query, "group");
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) {
+    throw new Error(`Multiple exact group matches found for "${query}"`);
+  }
+
+  const result = await runWx(["chats", "find", query], 60_000);
+  const rows = parseChatsFindOutput(result.stdout);
+  const groupMatches: ExactSearchResult[] = [];
+
+  for (const row of rows) {
+    const chat = await getChat(row.id);
+    const type = chatResultType(chat, row.id);
+    if (type !== "group") continue;
+
+    const id = chat?.username || chat?.id || row.id;
+    groupMatches.push({
+      id,
+      username: id,
+      type: "group",
+      name: chat?.name || row.name || id,
+      remark: chat?.remark,
+      matchField: "name",
+      source: "wx chats find",
+      isGroup: chat?.isGroup ?? true,
+    });
+  }
+
+  const deduped = dedupeExactResults(groupMatches);
+  if (deduped.length === 0) {
+    throw new Error(`No group found for "${query}"`);
+  }
+  if (deduped.length > 1) {
+    throw new Error(`Multiple group matches found for "${query}"`);
+  }
+  return deduped[0];
+}
+
+async function sendMentionTest(input: MentionTestInput): Promise<MentionTestResult> {
+  const groupName = input.groupName?.trim();
+  const mentionNames = splitMentionNames(input.mentionNames ?? "");
+  const tail = input.templateTail?.trim() || DEFAULT_MENTION_TEST_TAIL;
+
+  if (!groupName) {
+    throw new Error("groupName is required");
+  }
+  if (mentionNames.length === 0) {
+    throw new Error("mentionNames is required");
+  }
+
+  const [group, ...users] = await Promise.all([
+    resolveGroupByName(groupName),
+    ...mentionNames.map((name) => resolveSingleExactResult(name, "user", "user")),
+  ]);
+
+  const text = `${mentionNames.map((name) => `@${name}`).join(" ")} ${tail}`;
+  const send = await sendTextMessage(group.username || group.id, text);
+  return { group, users, text, send };
+}
+
 function imageExtension(filename?: string, mimeType?: string): string {
   const fromName = extname(filename ?? "").toLowerCase();
   if ([".png", ".jpg", ".jpeg", ".gif", ".webp"].includes(fromName)) {
@@ -829,6 +926,23 @@ async function handleApi(req: IncomingMessage, res: ServerResponse): Promise<boo
       sendJson(res, 200, {
         ok: true,
         output: result.stdout,
+        status: await getDemoStatus(),
+      });
+      return true;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/messages/send-mention-test") {
+      const body = await readJsonBody<MentionTestInput>(req);
+      const result = await sendMentionTest(body);
+      sendJson(res, 200, {
+        ok: true,
+        group: result.group,
+        users: result.users,
+        text: result.text,
+        output: result.send.stdout,
+        agentWechatSupport: {
+          mentions: "no dedicated mention parameter in wx messages send; sent as text",
+        },
         status: await getDemoStatus(),
       });
       return true;

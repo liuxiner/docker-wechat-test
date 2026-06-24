@@ -267,6 +267,7 @@ h2 {
 select,
 textarea,
 input[type="search"],
+input[type="text"],
 input[type="file"] {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -285,6 +286,7 @@ textarea {
 select:disabled,
 textarea:disabled,
 input[type="search"]:disabled,
+input[type="text"]:disabled,
 input[type="file"]:disabled {
   background: #f2f4f7;
   color: #98a2b3;
@@ -314,6 +316,21 @@ input[type="file"]:disabled {
   min-height: 38px;
   overflow-wrap: anywhere;
   text-align: left;
+}
+
+.mention-box {
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  margin: 0 -16px 2px;
+  padding: 0 16px 16px;
+}
+
+.mention-row {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(150px, 0.7fr) minmax(220px, 1fr) auto;
 }
 
 .send-row {
@@ -455,6 +472,10 @@ iframe {
   }
 
   .search-row {
+    grid-template-columns: 1fr;
+  }
+
+  .mention-row {
     grid-template-columns: 1fr;
   }
 }

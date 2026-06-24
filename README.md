@@ -34,6 +34,7 @@ http://localhost:3017
 - Switches the WeChat button between login, logging in, and logout
 - Provides a small send-message test panel via `wx chats list --json`, `wx messages send --text`, and `wx messages send --image`
 - Provides exact group/user name search backed by `wx chats find` and `wx contacts find --json`
+- Provides a group mention-style send test that resolves a group name and comma-separated user names before sending text
 
 ## Environment
 
@@ -63,3 +64,7 @@ demo's login button to let `agent-wechat` dismiss popups and enter the QR page.
 `wx contacts find <name> --json`), but the CLI does not expose an exact-match
 flag. This demo service filters the returned candidates with strict string
 matching before showing them in the UI.
+
+The CLI send command only accepts text, image, or file payloads. The group
+mention-style test sends text like `@Name message`; it does not use a dedicated
+mention API because this `@agent-wechat/cli` version does not expose one.

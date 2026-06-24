@@ -24,6 +24,10 @@ const els = {
   searchBtn: document.querySelector("#searchBtn"),
   searchResults: document.querySelector("#searchResults"),
   searchStatus: document.querySelector("#searchStatus"),
+  mentionGroupName: document.querySelector("#mentionGroupName"),
+  mentionUserNames: document.querySelector("#mentionUserNames"),
+  sendMentionTestBtn: document.querySelector("#sendMentionTestBtn"),
+  mentionTestStatus: document.querySelector("#mentionTestStatus"),
   loadChatsBtn: document.querySelector("#loadChatsBtn"),
   chatSelect: document.querySelector("#chatSelect"),
   messageText: document.querySelector("#messageText"),
@@ -63,6 +67,10 @@ function setBusy(busy) {
   els.searchName.disabled = busy || !loggedIn;
   els.searchType.disabled = busy || !loggedIn;
   els.searchBtn.disabled = busy || !loggedIn || !els.searchName.value.trim();
+  els.mentionGroupName.disabled = busy || !loggedIn;
+  els.mentionUserNames.disabled = busy || !loggedIn;
+  els.sendMentionTestBtn.disabled =
+    busy || !loggedIn || !els.mentionGroupName.value.trim() || !els.mentionUserNames.value.trim();
   els.loadChatsBtn.disabled = busy || !loggedIn;
   els.chatSelect.disabled = busy || !loggedIn;
   els.messageText.disabled = busy || !loggedIn;
@@ -244,6 +252,11 @@ function setSearchStatus(message, tone = "") {
   els.searchStatus.className = `inline-status ${tone}`;
 }
 
+function setMentionTestStatus(message, tone = "") {
+  els.mentionTestStatus.textContent = message;
+  els.mentionTestStatus.className = `inline-status ${tone}`;
+}
+
 function openLoginModal() {
   if (!state.last?.vncUrl) return;
   state.modalOpenedByUser = true;
@@ -344,6 +357,37 @@ async function searchExactTarget() {
     setSearchStatus(`${results.length} exact match${results.length === 1 ? "" : "es"}`, results.length ? "ok" : "");
   } catch (err) {
     setSearchStatus(err.message || String(err), "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function sendMentionTest() {
+  const groupName = els.mentionGroupName.value.trim();
+  const mentionNames = els.mentionUserNames.value.trim();
+  if (!groupName || !mentionNames) return;
+
+  setBusy(true);
+  setMentionTestStatus("Sending...");
+  try {
+    const payload = await api("/api/messages/send-mention-test", {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ groupName, mentionNames }),
+    });
+    render(payload.status);
+    if (payload.group) {
+      selectChatTarget(payload.group);
+    }
+    if (payload.text) {
+      els.messageText.value = payload.text;
+    }
+    setMentionTestStatus("Sent", "ok");
+  } catch (err) {
+    setMentionTestStatus(err.message || String(err), "error");
   } finally {
     setBusy(false);
   }
@@ -460,6 +504,12 @@ els.searchName.addEventListener("keydown", (event) => {
 els.searchType.addEventListener("change", () => setBusy(state.busy));
 els.searchBtn.addEventListener("click", () => {
   void searchExactTarget();
+});
+
+els.mentionGroupName.addEventListener("input", () => setBusy(state.busy));
+els.mentionUserNames.addEventListener("input", () => setBusy(state.busy));
+els.sendMentionTestBtn.addEventListener("click", () => {
+  void sendMentionTest();
 });
 
 els.loadChatsBtn.addEventListener("click", () => {
